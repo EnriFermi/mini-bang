@@ -1,27 +1,32 @@
 import random
 import numpy as np
 from typing import Callable
+
+from pydantic import BaseModel, create_model, Field
 from scipy.special import comb
 from collections import defaultdict
 from simulators.raf.utils import ChemicalReactionNetwork
-from simulators.raf.subordinate.simulator import CRNSimulator
+from simulators.raf.micro.simulator import CRNSimulator
+from simulators.base.macro.simulator import MacroSimulatorBase
 
+COMPLEXITY_LIMIT = 1000
 
-
-class MasterModel:
-    def __init__(self, 
+class MasterModel(MacroSimulatorBase):
+    def __init__(self,
+                 complexity: float = 0.5,
                  M0=10, 
                  alpha: Callable[[int], float] = lambda i: 0.01**i, 
                  K=4, 
                  p=0.005, 
                  k_lig=1.0, 
                  k_unlig=0.05, 
-                 max_events = 25000,
+                 time_limit = 5.0,
                  seed=None):
         """
         Initialize TAP model with parameters from the paper.
-        
+
         Parameters:
+        - complexity: Complexity parameter between 0.0 and 1.0 (default: 0.5)
         - M0: Number of initial molecular species (default: 10)
         - alpha: Base reaction probability (default: 0.01)
         - K: Maximum number of reactants (default: 4)
@@ -31,20 +36,31 @@ class MasterModel:
         - max_events: Number of events in simulation
         - seed: Random seed for reproducibility
         """
-        
+        super().__init__(complexity=complexity)
         self.M0 = M0
         self.alpha = alpha
         self.K = K
         self.p = p
         self.k_lig = k_lig
         self.k_unlig = k_unlig
-        self.max_events = max_events
+        self.time_limit = time_limit
         
         if seed is not None:
             np.random.seed(seed)
             random.seed(seed)
 
-    def get_slave_simulator(self, M, max_raf=False, prune_catalysts=False):
+    def get_saturation_description(self) -> type[BaseModel]:
+        return create_model('ParameterSaturation',
+                            value=(
+                                int,
+                                Field(gt=self.M0, le=COMPLEXITY_LIMIT)
+                            ),
+                            description=(
+                                str,
+                                Field(default="Approximate size of CRN to grow in the micro simulator")
+                            ))
+
+    def get_micro_simulator(self, M, max_raf=False, prune_catalysts=False):
         _, reactions, catalysis, _ = self._build_chemical_network(M)
         
         food_set = set(str(i) for i in range(1, self.M0 + 1))
@@ -61,7 +77,7 @@ class MasterModel:
             crn = self._cut_to_max_raf(crn)
         if prune_catalysts:
             crn = self._prune_catalysts(crn)
-        simulator = CRNSimulator(crn, max_events=self.max_events)
+        simulator = CRNSimulator(crn, time_limit=self.time_limit)
         return simulator
 
     def _build_chemical_network(self, M):

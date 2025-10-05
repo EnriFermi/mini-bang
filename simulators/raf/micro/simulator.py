@@ -1,22 +1,45 @@
 from simulators.raf.utils import ChemicalReactionNetwork
+from simulators.base.micro.simulator import MicroSimulatorBase
 from collections import Counter
 import random
+import json
 
-class CRNSimulator:
+class CRNSimulator(MicroSimulatorBase):
     def __init__(self, 
                  crn: ChemicalReactionNetwork,
                  min_food_conc: int = 5,
-                 max_events: int = 25000,
+                 time_limit: int = 1.0,
                  V: float = 1.0):
         self.crn = crn
         self.min_food_conc = min_food_conc
-        self.max_events = max_events
+        self.time_limit = time_limit
         self.V = V
 
-    def sample(self, seed=None, record_every=1):
+    def sample(self, seed=None, snapshot_times = (1.0, )) -> str:
         """
-        Runs Gillespie SSA on spec (see build_network_from_spec).
-        Returns times, traces (dict species->list).
+        Simulates chemical reaction network dynamics and records species traces over time.
+
+        The function performs a stochastic simulation of a chemical reaction
+        network (CRN), iterating through reactions to determine the state of
+        species in the network over time. It uses a propensity-based sampling
+        approach to determine the time evolution and outcomes of reactions.
+
+        Attributes:
+            None
+
+        Parameters:
+            seed (int, optional): Random seed for initializing the simulation to
+                ensure reproducibility.
+            snapshot_times (tuple[float], optional): Time points at which the
+                simulation outputs species concentrations. Defaults to (1.0,).
+
+        Returns:
+            str: JSON formatted string containing the simulation traces over
+                specified snapshot times. Each species' concentration is recorded
+                over the course of the simulation.
+
+        Raises:
+            None
         """
         if seed is not None:
             random.seed(seed)
@@ -29,12 +52,15 @@ class CRNSimulator:
 
         counts = {s: (self.min_food_conc if s in food else 0) for s in species}
 
-        times = [0.0]
-        traces = {s: [counts[s]] for s in species}
+        times = []
+        traces = {s: [] for s in species}
+        snapshot_times = sorted(snapshot_times)
+        st = 0
+
         t = 0.0
         events = 0
 
-        while events < self.max_events:
+        while t < self.time_limit:
             props = []
             actions = []  # tuples: ('lig'/'cle', rx_index)
 
@@ -92,12 +118,18 @@ class CRNSimulator:
                     counts[f] = self.min_food_conc
 
             events += 1
-            if events % record_every == 0:
+            if t >= snapshot_times[st]:
+
                 times.append(t)
                 for s in species:
                     traces[s].append(counts.get(s, 0))
+                st += 1
 
-        return times, traces
+                if st >= len(snapshot_times): #finish if we sampled for all needed times
+                    break
+
+        # return events
+        return json.dumps(traces)
 
     def _get_propensity(self, counts, items, effective_rate):
         if not items:
