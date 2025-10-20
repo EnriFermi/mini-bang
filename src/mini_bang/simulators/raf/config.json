@@ -1,0 +1,10 @@
+{
+  "id": "raf",
+  "description": "Reflexively autocatalytic food-set (RAF) chemical reaction network simulator",
+  "factory": "mini_bang.simulators.raf.factory:create_master_model",
+  "response_builder": "mini_bang.simulators.raf.response:raf_response_builder",
+  "metadata": {
+    "supports": ["max_raf", "prune_catalysts"],
+    "domain": ["chemistry", "raf"]
+  }
+}

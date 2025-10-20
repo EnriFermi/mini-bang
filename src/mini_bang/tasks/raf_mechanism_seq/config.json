@@ -1,0 +1,29 @@
+{
+  "task_id": "raf/mechanism-seq-v1",
+  "description": "Infer the generative mechanism of RAF trajectories by predicting the distribution of the final saturation step given earlier observations in a sequence. Use get_training_data() for labelled sequences and task.api.simulate(...) to explore additional saturations.",
+  "metadata": {
+    "level": 5,
+    "category": "Mechanism Inference",
+    "benchmark": "mini-bang"
+  },
+  "dataset": {
+    "sequences": [
+      {"id": "seq_A", "saturations": [12, 14, 16]},
+      {"id": "seq_B", "saturations": [18, 20, 22]}
+    ],
+    "train_seeds": {
+      "seq_A": [6101, 6102, 6103],
+      "seq_B": [6201, 6202, 6203]
+    },
+    "test_seeds": {
+      "seq_A": [9101, 9102],
+      "seq_B": [9201, 9202]
+    },
+    "runs": 3,
+    "snapshot_times": [0.25, 0.5, 0.75, 1.0]
+  },
+  "validation": {
+    "epsilon": 1e-6,
+    "max_ll_gap": 80.0
+  }
+}

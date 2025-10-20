@@ -1,0 +1,19 @@
+{
+  "task_id": "raf/mechanism-prob-v1",
+  "description": "Estimate how the probability of observing a RAF network changes with saturation level T. Use get_training_data() for labelled seeds and task.api.simulate(...) for extra samples if necessary.",
+  "metadata": {
+    "level": 5,
+    "category": "Mechanism Inference",
+    "benchmark": "mini-bang"
+  },
+  "dataset": {
+    "saturations": [10, 14, 18, 22],
+    "train_seeds": [411, 412, 413, 414, 415],
+    "test_seeds": [911, 912, 913, 914],
+    "snapshot_times": [0.25, 0.5, 0.75, 1.0]
+  },
+  "validation": {
+    "max_kl": 0.6,
+    "epsilon": 1e-6
+  }
+}

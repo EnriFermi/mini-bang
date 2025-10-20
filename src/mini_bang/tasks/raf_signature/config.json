@@ -1,0 +1,21 @@
+{
+  "task_id": "raf/signature-v1",
+  "description": "Classify whether a RAF simulator generated at different saturation levels exhibits RAF structure. Call get_training_data() for labelled runs and use task.api.simulate(...) if you need additional unlabelled trajectories.",
+  "metadata": {
+    "level": 4,
+    "category": "Signature Recognition",
+    "benchmark": "mini-bang"
+  },
+  "dataset": {
+    "saturations": [12, 16, 20],
+    "snapshot_times": [0.25, 0.5, 0.75, 1.0],
+    "train_seeds": [321, 322, 323, 324],
+    "test_seeds": [831, 832, 833],
+    "train_runs": 3,
+    "test_runs": 2
+  },
+  "validation": {
+    "min_macro_f1": 0.4,
+    "epsilon": 1e-6
+  }
+}

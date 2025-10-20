@@ -1,0 +1,26 @@
+{
+  "task_id": "raf/timing-v1",
+  "description": "Estimate the probability distribution over first-appearance times for each molecule in a RAF simulator. Use the provided training trajectories to learn the distribution, then return probabilities for every snapshot time and the 'none' event per molecule and simulator seed.",
+  "metadata": {
+    "benchmark": "mini-bang",
+    "level": 2,
+    "category": "Anomaly Detection",
+    "tags": ["raf", "temporal", "distribution"],
+    "snapshot_category_none": "none"
+  },
+  "api": {
+    "simulator_id": "raf",
+    "instructions": "Call get_training_data() to obtain trajectories for each macro seed. compute First-appearance distributions per molecule, output distributions keyed by macro seed -> species -> category (snapshot time as string or 'none')."
+  },
+  "dataset": {
+    "saturation": 18,
+    "snapshot_times": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+    "simulator_seeds": [111, 222, 333],
+    "train_runs": 20,
+    "test_runs": 10
+  },
+  "validation": {
+    "loglik_tolerance": 0.35,
+    "epsilon": 1e-6
+  }
+}

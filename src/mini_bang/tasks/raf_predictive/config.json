@@ -1,0 +1,21 @@
+{
+  "task_id": "raf/predictive-v1",
+  "description": "Generalise RAF formation predictions across monotonic sequences of simulations. Training data contains sequences where RAF emergence is monotonic in saturation; use task.api.simulate(...) to explore new saturated states if required.",
+  "metadata": {
+    "level": 6,
+    "category": "Predictive Generalisation",
+    "benchmark": "mini-bang"
+  },
+  "dataset": {
+    "sequences": [
+      {"id": "seq_P", "saturations": [12, 14, 16, 18]},
+      {"id": "seq_Q", "saturations": [20, 22, 24, 26]}
+    ],
+    "train_seeds": [601, 602, 603, 604],
+    "test_seeds": [960, 961, 962]
+  },
+  "validation": {
+    "epsilon": 1e-6,
+    "max_cross_entropy": 0.65
+  }
+}
