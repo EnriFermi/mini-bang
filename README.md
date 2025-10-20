@@ -15,6 +15,11 @@ src/mini_bang/
 sandbox/                  # Scratch space / legacy playground (not used by core libs)
 ```
 
+
+![SVG Image](figures/Benchmark.svg)
+
+Visual diagram explaining relations between benchmark components
+
 ## Available Tasks
 
 | ID | Level | Name | Objective | Baseline Agent |
