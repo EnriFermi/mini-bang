@@ -1,6 +1,6 @@
 {
   "task_id": "raf/predictive-v1",
-  "description": "Generalise RAF formation predictions across monotonic sequences of simulations. Training data contains sequences where RAF emergence is monotonic in saturation; use task.api.simulate(...) to explore new saturated states if required.",
+  "description": "Generalise RAF formation predictions across monotonic sequences of simulations. Use generate_samples([T1, T2, ...], runs, snapshot_times, extras=[\"is_raf\"], macro_params={\"seed\": ...}) to explore saturated states and build your training data.",
   "metadata": {
     "level": 6,
     "category": "Predictive Generalisation",
@@ -17,5 +17,8 @@
   "validation": {
     "epsilon": 1e-6,
     "max_cross_entropy": 0.65
+  },
+  "api": {
+    "max_generate_calls": 50
   }
 }

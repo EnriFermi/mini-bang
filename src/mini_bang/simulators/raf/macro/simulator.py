@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from scipy.special import comb
+from math import comb
 from typing import Callable, Iterable, Sequence, Union
 
 import numpy as np
@@ -121,7 +121,7 @@ class MasterModel(MacroSimulatorBase):
             Mt_prev = Mt
             for i in range(1, min(self.K + 1, Mt_prev + 1)):
                 alpha_i = self.alpha(i)
-                n_combinations = comb(Mt_prev, i, exact=True)
+                n_combinations = comb(Mt_prev, i)
                 s_i = alpha_i * n_combinations
                 r_i = np.random.poisson(s_i)
 
@@ -161,7 +161,6 @@ class MasterModel(MacroSimulatorBase):
                     break
             if Mt >= Mmax:
                 break
-
         return [snapshots[m] for m in Ms]
 
     def _cut_to_max_raf(self, crn):

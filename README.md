@@ -8,11 +8,9 @@ mini-bang is an experimental benchmark for evaluating autonomous research agents
 src/mini_bang/
   agent_connector.py      # High level harness for running agents against tasks
   agents/                 # Agent implementations (LangChain, etc.)
-  api/server.py           # HTTP simulation service (macro/micro orchestration)
-  runtime/server_manager.py# Lazy server bootstrapper
+  mcp/                    # MCP transport (server/client/config)
   simulators/             # Simulator definitions discovered at runtime
   tasks/                  # Task definitions, configs, loaders
-sandbox/                  # Scratch space / legacy playground (not used by core libs)
 ```
 
 
@@ -30,23 +28,25 @@ Visual diagram explaining relations between benchmark components
 | `raf/mechanism-seq-v1` | 5 | Mechanism Sequence | Model the distribution of the final trajectory in RAF sequences | `LangChainRAFMechanismSequenceAgent` |
 | `raf/predictive-v1` | 6 | Predictive Generalisation | Forecast RAF emergence probabilities in monotonic sequences | `LangChainRAFPredictiveAgent` |
 
-Tasks expose labelled training data via `get_training_data()`. Tasks that allow additional exploration also provide `simulate(...)`, e.g.:
+Agent-facing task APIs expose a single entry point for on-demand simulation:
 
 ```python
-fresh = task.api.simulate(
+task.api.generate_samples(
     saturation=18,
     runs=2,
     snapshot_times=[0.25, 0.5, 0.75, 1.0],
     extras=["is_raf", "first_hits"],
-    macro_params={"seed": 123}
+    macro_params={"seed": 123},
 )
 ```
+
+Each task enforces a per-task call limit (see the `api.max_generate_calls` field in the task config). Training “snapshots” are not exposed directly; agents must gather the data they need using `generate_samples` within the limit.
 
 ## Running Baseline Agents
 
 ### RAF Timing (Level 2)
 
-The `LangChainRAFTimingAgent` consumes the RAF timing dataset and outputs per-species first-hit distributions. You can execute it through the connector:
+The `LangChainRAFTimingAgent` gathers samples via `generate_samples` and outputs per-species first-hit distributions. Execute it through the connector. The connector uses the MCP client config at `src/mini_bang/mcp/mcp.config.json` to connect (stdio auto‑spawn by default, or HTTP if configured).
 
 ```python
 from mini_bang.agent_connector import AgentConnector
@@ -60,7 +60,7 @@ print(result.validation.details)
 print(result.validation.metrics)
 ```
 
-The connector automatically starts the HTTP simulation server (if it is not already running), loads the RAF timing dataset, and validates the agent output. `result.submission.answer` contains the raw `{"distributions": ...}` payload produced by the agent.
+`result.submission.answer` contains the raw `{"distributions": ...}` payload produced by the agent.
 
 ### RAF Signature Recognition (Level 4)
 
@@ -152,45 +152,37 @@ The RAF timing task is an end-to-end example (`src/mini_bang/tasks/raf_timing/`)
 
 3. **Extras**: declare advanced response options (e.g., `first_hits`, `is_raf`) within the response builder and reference them from tasks via the `extras` list in API requests.
 
-## Launching the HTTP Simulation Server Manually
+## MCP Simulation Server
 
-Although the connector manages the server automatically, you can start it explicitly:
+The benchmark exposes a Machine Control Protocol (MCP) server implemented with FastMCP. The client uses the canonical MCP config at `src/mini_bang/mcp/mcp.config.json`.
 
-```bash
-python -m mini_bang.api.server
-```
+- Local (stdio, auto‑spawn): use the provided stdio config
+  - File: `src/mini_bang/mcp/mcp.config.stdio.json`
+  - To enable: copy over the active config
+    - `cp src/mini_bang/mcp/mcp.config.stdio.json src/mini_bang/mcp/mcp.config.json`
 
-The server exposes:
-- `GET /health`
-- `GET /simulators`
-- `POST /simulate/<sim_id>/generate`
+- Remote (HTTP/streamable): run the server and point the config URL to it
+  - Start server: `PYTHONPATH=src python -m mini_bang.mcp.server --transport http --host 127.0.0.1 --port 8000`
+  - Example config (`src/mini_bang/mcp/mcp.config.json`):
+    ```json
+    {
+      "mcpServers": {
+        "mini-bang": {
+          "url": "http://127.0.0.1:8000/mcp/",
+          "transport": "http",
+          "description": "Remote Mini‑Bang MCP server (HTTP)"
+        }
+      }
+    }
+    ```
 
-Clients should provide `macro_params`, `micro_params`, `sample_params`, and optional `extras` to control the response payload.
+All agents ultimately call the unified MCP tool `get_simulation` with payload fields: `simulator_id`, `saturation` (int or list), `runs`, optional `snapshot_times`, `extras`, and parameter dictionaries for `macro_params`, `micro_params`, and `sample_params`.
 
-Example request for the RAF simulator:
-
-```bash
-curl -s \
-  -X POST http://127.0.0.1:8765/simulate/raf/generate \
-  -H 'Content-Type: application/json' \
-  -d '{
-        "saturation": 18,
-        "runs": 5,
-        "macro_params": {"seed": 123},
-        "micro_params": {"max_raf": false, "prune_catalysts": false},
-        "sample_params": {"snapshot_times": [0.25, 0.5, 0.75, 1.0]},
-        "extras": ["is_raf", "first_hits"]
-      }'
-```
-
-The response contains sampled trajectories along with any requested extras (e.g., `is_raf`, `first_hits`).
+Server logs are written to `logs/mcp_server.log` by default (configurable with `--log-file` or `MINI_BANG_MCP_LOG`).
 
 ## Environment Setup
 
 ```bash
-pip install -r requirements.txt
+pip install "fastmcp>=2.13"
 ```
-
-If you rely on LangChain agents, configure your preferred LLM environment variables (e.g., `OPENAI_API_KEY`) before invocation.
-
 ---

@@ -4,7 +4,6 @@ import copy
 from typing import Any
 
 from mini_bang.framework.task import SimulationTask, TaskEnvironment
-from mini_bang.runtime import ensure_server_running
 from mini_bang.tasks.config_loader import load_task_config
 
 
@@ -38,16 +37,13 @@ class ConfiguredSimulationTask(SimulationTask):
 
 
 class RemoteSimulationTask(ConfiguredSimulationTask):
-    """
-    Task base for simulations that require the shared HTTP server.
-    """
+    """Task base for simulations that rely on the MCP server."""
 
     def build(self) -> TaskEnvironment:
-        server_url = ensure_server_running()
-        return self._build_remote_environment(server_url)
+        return self._build_remote_environment()
 
     def _build_environment(self) -> TaskEnvironment:  # pragma: no cover - not used
         raise NotImplementedError("RemoteSimulationTask uses _build_remote_environment instead")
 
-    def _build_remote_environment(self, server_url: str) -> TaskEnvironment:
+    def _build_remote_environment(self) -> TaskEnvironment:
         raise NotImplementedError

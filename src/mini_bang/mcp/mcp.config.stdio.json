@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "mini-bang": {
+      "transport": "stdio",
+      "command": "python",
+      "args": ["-m", "mini_bang.mcp.server", "--transport", "stdio"],
+      "description": "Local Mini‑Bang MCP server (stdio)"
+    }
+  }
+}

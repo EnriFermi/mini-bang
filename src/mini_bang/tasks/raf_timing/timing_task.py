@@ -6,9 +6,8 @@ from typing import Any, Dict, Iterable, List
 
 from mini_bang.framework.task import TaskEnvironment, TaskSubmission, ValidationResult
 from mini_bang.tasks.base import RemoteSimulationTask
-from mini_bang.tasks.raf_common.api_client import RAFSimulationClient
+from mini_bang.tasks.raf_common.api_client import RAFSimulationAPI
 from mini_bang.tasks.raf_timing.timing_api import RAFTimingAPI
-from mini_bang.simulators.registry import get_simulator_entry
 
 
 @dataclass
@@ -31,7 +30,6 @@ class RAFLevel2TimingTask(RemoteSimulationTask):
         self._simulator_seeds: List[int] = [int(s) for s in dataset_cfg.get("simulator_seeds", [])]
         if not self._simulator_seeds:
             raise ValueError("Simulator seeds must be provided")
-        self._train_runs = int(dataset_cfg.get("train_runs", 16))
         self._test_runs = int(dataset_cfg.get("test_runs", 8))
 
         val_cfg = cfg.get("validation", {})
@@ -43,87 +41,51 @@ class RAFLevel2TimingTask(RemoteSimulationTask):
         api_cfg = cfg.get("api", {})
         self._simulator_id = api_cfg.get("simulator_id", "raf")
         self._instructions = api_cfg.get("instructions", "")
+        self._max_generate_calls = int(api_cfg.get("max_generate_calls", 50))
         self._description = cfg.get("description", "")
         self._metadata_template: Dict[str, Any] = cfg.get("metadata", {})
 
-        self._entry = get_simulator_entry(self._simulator_id)
-        self._latest_dataset: dict[str, Any] | None = None
         self._latest_test_data: dict[str, Any] | None = None
 
-    def _build_remote_environment(self, server_url: str) -> TaskEnvironment:
-        trajectory_client = RAFSimulationClient(server_url, self._simulator_id)
-        dataset, test_data = self._prepare_dataset(trajectory_client)
-        self._latest_dataset = dataset
+    def _build_remote_environment(self) -> TaskEnvironment:
+        trajectory_client = RAFSimulationAPI(simulator_id=self._simulator_id)
+        # Only prepare held-out test data for validation; agents gather their own training data
+        test_data = self._prepare_test_data(trajectory_client)
+        self._latest_dataset = None
         self._latest_test_data = test_data
 
-        api = RAFTimingAPI(description=self._instructions, dataset=dataset)
+        api = RAFTimingAPI(description=self._instructions, client=trajectory_client, max_generate_calls=self._max_generate_calls)
         metadata = dict(self._metadata_template)
         metadata.update(
             {
-                "api_base_url": server_url,
                 "simulator_id": self._simulator_id,
                 "snapshot_times": list(self._snapshot_times),
                 "saturation": self._saturation,
-                "train_seeds": [str(s) for s in self._simulator_seeds],
+                "mcp": trajectory_client.describe(),
             }
         )
         return TaskEnvironment(description=self._description, api=api, metadata=metadata)
 
-    def _prepare_dataset(self, client: RAFSimulationClient) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Materialise labelled trajectories for every training seed before agents run."""
+    def _prepare_test_data(self, client: RAFSimulationAPI) -> dict[str, Any]:
+        """Prepare only held-out test data for validation."""
         snapshot_times = tuple(self._snapshot_times)
-        dataset: dict[str, Any] = {
-            "snapshot_times": snapshot_times,
-            "saturation": self._saturation,
-            "simulators": {},
-        }
         test_data: dict[str, Any] = {}
-
         for seed in self._simulator_seeds:
             macro_params = {"seed": seed}
-            train_payload = client.generate_samples(
-                saturation=self._saturation,
-                runs=self._train_runs,
-                snapshot_times=snapshot_times,
-                seed=None,
-                extras=["first_hits"],
-                max_raf=False,
-                prune_catalysts=False,
-                macro_params=macro_params,
-                micro_params={},
-                sample_params={},
-            )
             test_payload = client.generate_samples(
                 saturation=self._saturation,
                 runs=self._test_runs,
                 snapshot_times=snapshot_times,
-                seed=None,
                 extras=["first_hits"],
-                max_raf=False,
-                prune_catalysts=False,
                 macro_params=macro_params,
                 micro_params={},
                 sample_params={},
             )
-
-            dataset_snapshot_times = train_payload.get("snapshot_times")
-            if dataset_snapshot_times is not None and not dataset["simulators"]:
-                dataset["snapshot_times"] = tuple(dataset_snapshot_times)
-
-            dataset["simulators"][str(seed)] = {
-                "macro_seed": seed,
-                "train": {
-                    "trajectories": train_payload["trajectories"],
-                    "first_hits": train_payload.get("first_hits", []),
-                },
-                "species": train_payload.get("metadata", {}).get("species", []),
-            }
             test_data[str(seed)] = {
                 "macro_seed": seed,
                 "first_hits": test_payload.get("first_hits", []),
             }
-
-        return dataset, test_data
+        return test_data
 
     def validate(self, submission: TaskSubmission) -> ValidationResult:
         answer = submission.answer
@@ -133,7 +95,7 @@ class RAFLevel2TimingTask(RemoteSimulationTask):
         if not isinstance(distributions, dict):
             return ValidationResult(False, "Missing 'distributions' mapping in submission")
 
-        if self._latest_dataset is None or self._latest_test_data is None:
+        if self._latest_test_data is None:
             return ValidationResult(False, "Task dataset not initialized")
 
         snapshot_times = tuple(self._snapshot_times)
@@ -143,14 +105,18 @@ class RAFLevel2TimingTask(RemoteSimulationTask):
         ll_diffs: List[float] = []
 
         for seed_str, test_info in self._latest_test_data.items():
-            if seed_str not in distributions:
+            seed_dist = distributions.get(seed_str)
+            if seed_dist is None:
+                # Accept a default distribution under special keys or a single provided distribution
+                seed_dist = distributions.get("default") or distributions.get("*")
+            if seed_dist is None and len(distributions) == 1:
+                seed_dist = next(iter(distributions.values()))
+            if seed_dist is None:
                 return ValidationResult(False, f"Missing distribution for simulator seed {seed_str}")
-            seed_dist = distributions[seed_str]
             if not isinstance(seed_dist, dict):
                 return ValidationResult(False, f"Distribution for seed {seed_str} must be a mapping")
 
-            train_info = self._latest_dataset["simulators"][seed_str]["train"]
-            species_keys = self._extract_species(train_info["trajectories"])
+            species_keys = self._extract_species_from_hits(test_info["first_hits"])
 
             for species in species_keys:
                 pred = seed_dist.get(species)
@@ -175,6 +141,12 @@ class RAFLevel2TimingTask(RemoteSimulationTask):
         seen: set[str] = set()
         for traj in trajectories:
             seen.update(traj.keys())
+        return sorted(seen, key=lambda s: int(s))
+
+    def _extract_species_from_hits(self, first_hits: Iterable[Dict[str, Any]]) -> List[str]:
+        seen: set[str] = set()
+        for record in first_hits:
+            seen.update(str(k) for k in record.keys())
         return sorted(seen, key=lambda s: int(s))
 
     def _normalize_distribution(self, data: Dict[str, Any], categories: List[str]) -> Dict[str, float]:

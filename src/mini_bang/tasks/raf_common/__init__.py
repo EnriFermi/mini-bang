@@ -1,3 +1,3 @@
-from .api_client import RAFSimulationClient
+from .api_client import RAFSimulationAPI
 
-__all__ = ["RAFSimulationClient"]
+__all__ = ["RAFSimulationAPI"]

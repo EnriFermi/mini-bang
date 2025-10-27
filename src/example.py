@@ -25,11 +25,11 @@ from mini_bang.agents import (
 def main() -> None:
     connector = AgentConnector()
     experiments = [
-        ("raf/timing-v1", LangChainRAFTimingAgent),
-        ("raf/signature-v1", LangChainRAFSignatureAgent),
+        # ("raf/timing-v1", LangChainRAFTimingAgent),
+        # ("raf/signature-v1", LangChainRAFSignatureAgent),
         ("raf/mechanism-prob-v1", LangChainRAFMechanismProbabilityAgent),
-        ("raf/mechanism-seq-v1", LangChainRAFMechanismSequenceAgent),
-        ("raf/predictive-v1", LangChainRAFPredictiveAgent),
+        # ("raf/mechanism-seq-v1", LangChainRAFMechanismSequenceAgent),
+        # ("raf/predictive-v1", LangChainRAFPredictiveAgent),
     ]
 
     for task_id, agent_cls in experiments:

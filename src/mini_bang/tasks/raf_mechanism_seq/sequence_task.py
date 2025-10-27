@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from mini_bang.framework.task import TaskEnvironment, TaskSubmission, ValidationResult
 from mini_bang.tasks.base import RemoteSimulationTask
-from mini_bang.tasks.raf_common.api_client import RAFSimulationClient
+from mini_bang.tasks.raf_common.api_client import RAFSimulationAPI
 from mini_bang.tasks.raf_mechanism_seq.sequence_api import RAFMechanismSequenceAPI
 
 
@@ -50,75 +50,43 @@ class RAFLevel5MechanismSequenceTask(RemoteSimulationTask):
         api_cfg = cfg.get("api", {})
         self._simulator_id = api_cfg.get("simulator_id", "raf")
         self._instructions = api_cfg.get("instructions") or self._description
+        self._max_generate_calls = int(api_cfg.get("max_generate_calls", 50))
 
         self._dataset: dict[str, Any] | None = None
         self._test_data: Dict[str, Dict[str, Any]] | None = None
 
-    def _build_remote_environment(self, server_url: str) -> TaskEnvironment:
-        client = RAFSimulationClient(server_url, self._simulator_id, instructions=self._instructions)
-        dataset, test_data = self._prepare_dataset(client)
-        self._dataset = dataset
+    def _build_remote_environment(self) -> TaskEnvironment:
+        client = RAFSimulationAPI(simulator_id=self._simulator_id, instructions=self._instructions)
+        test_data = self._prepare_test_data(client)
+        self._dataset = None
         self._test_data = test_data
 
-        api = RAFMechanismSequenceAPI(description=self._instructions, dataset=dataset, client=client)
+        api = RAFMechanismSequenceAPI(description=self._instructions, dataset={}, client=client, max_generate_calls=self._max_generate_calls)
         metadata = dict(self._metadata_template)
         metadata.update(
             {
-                "api_base_url": server_url,
                 "simulator_id": self._simulator_id,
                 "snapshot_times": list(self._snapshot_times),
                 "sequences": self._sequences,
+                "mcp": client.describe(),
             }
         )
         return TaskEnvironment(description=self._description, api=api, metadata=metadata)
 
-    def _prepare_dataset(
-        self, client: RAFSimulationClient
-    ) -> tuple[dict[str, Any], Dict[str, Dict[str, Any]]]:
-        """Generate step-by-step sequences using shared macro runs per seed."""
-        dataset: dict[str, Any] = {
-            "sequences": {},
-            "snapshot_times": list(self._snapshot_times),
-        }
+    def _prepare_test_data(
+        self, client: RAFSimulationAPI
+    ) -> Dict[str, Dict[str, Any]]:
+        """Generate held-out sequences for validation only."""
         test_data: Dict[str, Dict[str, Any]] = {}
-
         for seq_cfg in self._sequences:
             seq_id = seq_cfg["id"]
             saturations = [int(t) for t in seq_cfg["saturations"]]
-            if seq_id not in self._train_seeds or seq_id not in self._test_seeds:
-                raise ValueError(f"Missing train/test seeds for sequence {seq_id}")
-            dataset["sequences"][seq_id] = {
-                "saturations": list(saturations),
-                "train": [],
-            }
+            if seq_id not in self._test_seeds:
+                raise ValueError(f"Missing test seeds for sequence {seq_id}")
             test_data[seq_id] = {
                 "saturations": list(saturations),
                 "samples": [],
             }
-
-            for macro_seed in self._train_seeds.get(seq_id, []):
-                response = client.generate_samples(
-                    saturation=saturations,
-                    runs=self._runs,
-                    snapshot_times=self._snapshot_times,
-                    extras=["is_raf"],
-                    macro_params={"seed": macro_seed},
-                )
-                step_entries: List[Dict[str, Any]] = []
-                for record in response.get("sequence", []):
-                    step_entries.append(
-                        {
-                            "saturation": record.get("saturation"),
-                            "trajectories": record.get("trajectories", []),
-                        }
-                    )
-                dataset["sequences"][seq_id]["train"].append(
-                    {
-                        "macro_seed": macro_seed,
-                        "steps": step_entries,
-                    }
-                )
-
             for macro_seed in self._test_seeds.get(seq_id, []):
                 response = client.generate_samples(
                     saturation=saturations,
@@ -135,7 +103,7 @@ class RAFLevel5MechanismSequenceTask(RemoteSimulationTask):
                         "trajectories": final_record.get("trajectories", []),
                     }
                 )
-        return dataset, test_data
+        return test_data
 
     def validate(self, submission: TaskSubmission) -> ValidationResult:
         if self._test_data is None:

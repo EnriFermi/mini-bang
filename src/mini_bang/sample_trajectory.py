@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from mini_bang.runtime.server_manager import ensure_server_running
-from mini_bang.tasks.raf_common.api_client import RAFSimulationClient
+from mini_bang.tasks.raf_common.api_client import RAFSimulationAPI
 
-_SERVER_URL = ensure_server_running()
-_CLIENT = RAFSimulationClient(_SERVER_URL, "raf")
+_CLIENT = RAFSimulationAPI(simulator_id="raf")
 
 
 def sample_trajectory(payload) -> tuple[dict[str, dict], bool] | str:

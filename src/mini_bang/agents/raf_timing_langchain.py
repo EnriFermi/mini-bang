@@ -13,6 +13,7 @@ from mini_bang.agents.base import AgentBase
 @dataclass
 class _TimingContext:
     api: RAFTimingAPI
+    metadata: Dict[str, Any]
 
 
 class LangChainRAFTimingAgent(AgentBase):
@@ -28,26 +29,55 @@ class LangChainRAFTimingAgent(AgentBase):
     def solve(self, task: TaskEnvironment) -> TaskSubmission:
         if not isinstance(task.api, RAFTimingAPI):
             raise TypeError("LangChainRAFTimingAgent expects a RAFTimingAPI")
-        context = _TimingContext(api=task.api)
+        context = _TimingContext(api=task.api, metadata=task.metadata or {})
         answer = self._pipeline.invoke({"context": context})
         return TaskSubmission(answer=answer)
 
     def _fetch_data(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         context: _TimingContext = payload["context"]
-        training = context.api.get_training_data()
-        spec = context.api.get_spec()
-        snapshot_times = [float(t) for t in training.get("snapshot_times", [])]
-        return {
-            "snapshot_times": snapshot_times,
-            "simulators": training.get("simulators", {}),
-            "macro_seeds": spec.get("macro_seeds", list(training.get("simulators", {}).keys())),
-        }
+        meta = context.metadata
+        snapshot_times = [float(t) for t in meta.get("snapshot_times", [])]
+        saturation = int(meta.get("saturation", 0))
+        simulators: Dict[str, Any] = {}
+
+        # Consume the full call budget with distinct seeds.
+        # If the API exposes remaining_calls(), use it; otherwise keep calling until capped.
+        max_calls = getattr(context.api, "remaining_calls", lambda: 10**9)()
+        calls = 0
+        seed_base = 10_000
+        while calls < max_calls:
+            seed = seed_base + calls
+            try:
+                resp = context.api.generate_samples(
+                    saturation=saturation,
+                    runs=1,
+                    snapshot_times=snapshot_times,
+                    extras=["first_hits"],
+                    macro_params={"seed": seed},
+                )
+            except Exception as exc:
+                # Stop when we hit the per-task limit
+                break
+            simulators[str(seed)] = {
+                "macro_seed": seed,
+                "train": {
+                    "trajectories": resp.get("trajectories", []),
+                    "first_hits": resp.get("first_hits", []),
+                },
+                "species": resp.get("metadata", {}).get("species", []),
+            }
+            calls += 1
+
+        return {"snapshot_times": snapshot_times, "simulators": simulators}
 
     def _compute_distributions(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         snapshot_times = payload["snapshot_times"]
         categories = [str(t) for t in snapshot_times] + ["none"]
         simulators: Dict[str, Any] = payload["simulators"]
         result: Dict[str, Any] = {}
+        # Aggregate across seeds to provide a default distribution as well
+        global_counts: Dict[str, Dict[str, float]] = { }
+        total_hits_per_species: Dict[str, float] = {}
 
         for seed, meta in simulators.items():
             train_block = meta.get("train", {})
@@ -79,6 +109,20 @@ class LangChainRAFTimingAgent(AgentBase):
                 probs = {cat: value / normaliser for cat, value in probs.items()}
                 seed_dist[specie] = probs
             result[seed] = seed_dist
+            # accumulate global counts
+            for specie, probs in seed_dist.items():
+                gc = global_counts.setdefault(specie, {})
+                for cat, p in probs.items():
+                    gc[cat] = gc.get(cat, 0.0) + p
+                total_hits_per_species[specie] = total_hits_per_species.get(specie, 0.0) + 1.0
+
+        # Build default distribution by averaging per-species probs over seeds
+        if global_counts:
+            default_dist: Dict[str, Dict[str, float]] = {}
+            for specie, cat_counts in global_counts.items():
+                denom = max(1.0, total_hits_per_species.get(specie, 1.0))
+                default_dist[specie] = {cat: val / denom for cat, val in cat_counts.items()}
+            result["default"] = default_dist
 
         return {"distributions": result}
 

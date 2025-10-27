@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from mini_bang.framework.task import TaskEnvironment, TaskSubmission, ValidationResult
 from mini_bang.tasks.base import RemoteSimulationTask
-from mini_bang.tasks.raf_common.api_client import RAFSimulationClient
+from mini_bang.tasks.raf_common.api_client import RAFSimulationAPI
 from mini_bang.tasks.raf_predictive.predictive_api import RAFPredictiveAPI
 
 
@@ -44,60 +44,41 @@ class RAFLevel6PredictiveTask(RemoteSimulationTask):
         api_cfg = cfg.get("api", {})
         self._simulator_id = api_cfg.get("simulator_id", "raf")
         self._instructions = api_cfg.get("instructions") or self._description
+        self._max_generate_calls = int(api_cfg.get("max_generate_calls", 50))
 
         self._dataset: dict[str, Any] | None = None
         self._test_data: Dict[str, Dict[str, Any]] | None = None
 
-    def _build_remote_environment(self, server_url: str) -> TaskEnvironment:
-        client = RAFSimulationClient(server_url, self._simulator_id, instructions=self._instructions)
-        dataset, test_data = self._prepare_dataset(client)
-        self._dataset = dataset
+    def _build_remote_environment(self) -> TaskEnvironment:
+        client = RAFSimulationAPI(simulator_id=self._simulator_id, instructions=self._instructions)
+        test_data = self._prepare_test_data(client)
+        self._dataset = None
         self._test_data = test_data
 
-        api = RAFPredictiveAPI(description=self._instructions, dataset=dataset, client=client)
+        api = RAFPredictiveAPI(description=self._instructions, dataset={}, client=client, max_generate_calls=self._max_generate_calls)
         metadata = dict(self._metadata_template)
         metadata.update(
             {
-                "api_base_url": server_url,
                 "simulator_id": self._simulator_id,
                 "sequences": self._sequences,
                 "test_seeds": [str(s) for s in self._test_seeds],
+                "mcp": client.describe(),
             }
         )
         return TaskEnvironment(description=self._description, api=api, metadata=metadata)
 
-    def _prepare_dataset(
-        self, client: RAFSimulationClient
-    ) -> tuple[dict[str, Any], Dict[str, Dict[str, Any]]]:
-        """Build monotonic sequences with shared macro runs for training and evaluation."""
-        dataset: dict[str, Any] = {"sequences": {}}
+    def _prepare_test_data(
+        self, client: RAFSimulationAPI
+    ) -> Dict[str, Dict[str, Any]]:
+        """Build held-out test truth for sequences."""
         test_truth: Dict[str, Dict[str, Any]] = {}
-
         for seq_cfg in self._sequences:
             seq_id = seq_cfg["id"]
             saturations = [int(t) for t in seq_cfg["saturations"]]
-            dataset["sequences"][seq_id] = {
-                "saturations": list(saturations),
-                "train": [],
-            }
             test_truth[seq_id] = {
                 "saturations": list(saturations),
                 "samples": [],
             }
-
-            for seed in self._train_seeds:
-                response = client.generate_samples(
-                    saturation=saturations,
-                    runs=1,
-                    snapshot_times=None,
-                    extras=["is_raf"],
-                    macro_params={"seed": seed},
-                )
-                record = {"macro_seed": seed, "is_raf": {}}
-                for entry in response.get("sequence", []):
-                    record["is_raf"][str(entry.get("saturation"))] = bool(entry.get("is_raf", False))
-                dataset["sequences"][seq_id]["train"].append(record)
-
             for seed in self._test_seeds:
                 response = client.generate_samples(
                     saturation=saturations,
@@ -110,7 +91,7 @@ class RAFLevel6PredictiveTask(RemoteSimulationTask):
                 for entry in response.get("sequence", []):
                     result["is_raf"][str(entry.get("saturation"))] = bool(entry.get("is_raf", False))
                 test_truth[seq_id]["samples"].append(result)
-        return dataset, test_truth
+        return test_truth
 
     def validate(self, submission: TaskSubmission) -> ValidationResult:
         if self._test_data is None:

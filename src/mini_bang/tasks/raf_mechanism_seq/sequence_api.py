@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from mini_bang.framework.task import AgentAPI
-from mini_bang.tasks.raf_common.api_client import RAFSimulationClient
+from mini_bang.tasks.raf_common.api_client import RAFSimulationAPI
 
 
 class RAFMechanismSequenceAPI(AgentAPI):
@@ -14,41 +14,26 @@ class RAFMechanismSequenceAPI(AgentAPI):
         *,
         description: str,
         dataset: dict[str, Any],
-        client: RAFSimulationClient,
+        client: RAFSimulationAPI,
+        max_generate_calls: int | None = None,
     ) -> None:
         self._description = description
         self._dataset = dataset
         self._client = client
+        self._max_calls = int(max_generate_calls) if max_generate_calls is not None else 50
+        self._used_calls = 0
 
     def instructions(self) -> str:
         return self._description
 
-    def get_training_data(self) -> dict[str, Any]:
-        """Provide the full step-by-step trajectories for each training sequence."""
-        return {
-            "sequences": {
-                seq_id: {
-                    "saturations": list(info["saturations"]),
-                    "train": [
-                        {
-                            "macro_seed": item["macro_seed"],
-                            "steps": [
-                                {
-                                    "saturation": step["saturation"],
-                                    "trajectories": [self._clone_traj(traj) for traj in step["trajectories"]],
-                                }
-                                for step in item["steps"]
-                            ],
-                        }
-                        for item in info["train"]
-                    ],
-                }
-                for seq_id, info in self._dataset["sequences"].items()
-            },
-            "snapshot_times": list(self._dataset["snapshot_times"]),
-        }
+    # No training data access: agents should use generate_samples
 
-    def simulate(
+    def _consume(self) -> None:
+        if self._used_calls >= self._max_calls:
+            raise RuntimeError("generate_samples call limit exceeded for this task")
+        self._used_calls += 1
+
+    def generate_samples(
         self,
         *,
         saturation: int | Sequence[int],
@@ -59,7 +44,7 @@ class RAFMechanismSequenceAPI(AgentAPI):
         micro_params: dict[str, Any] | None = None,
         sample_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Proxy to the simulation server; supports passing a saturation list for sequences."""
+        self._consume()
         return self._client.generate_samples(
             saturation=saturation,
             runs=runs,
@@ -70,6 +55,5 @@ class RAFMechanismSequenceAPI(AgentAPI):
             sample_params=sample_params,
         )
 
-    @staticmethod
-    def _clone_traj(traj: dict[str, list[int]]) -> dict[str, list[int]]:
-        return {species: list(counts) for species, counts in traj.items()}
+
+    # Clone helpers removed with training-data API removal

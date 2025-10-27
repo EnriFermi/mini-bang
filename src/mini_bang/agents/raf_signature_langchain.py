@@ -31,22 +31,30 @@ class LangChainRAFSignatureAgent(AgentBase):
 
     def _gather_stats(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         context: _SignatureContext = payload["context"]
-        data = context.api.get_training_data()
+        meta = context.metadata
+        saturations = [int(t) for t in meta.get("saturations", [])]
+        snapshot_times = [float(t) for t in meta.get("snapshot_times", [])]
+        seeds = [int(s) for s in meta.get("test_seeds", [])]
         stats: Dict[str, float] = {}
         available_seeds: Dict[str, set[str]] = {}
-        for sat, samples in data["simulators"].items():
-            if not samples:
-                stats[sat] = 0.5
-                available_seeds[sat] = set()
-                continue
-            ratio = sum(1.0 for item in samples if item.get("is_raf")) / len(samples)
-            stats[sat] = ratio
-            available_seeds[sat] = {str(item.get("macro_seed")) for item in samples}
-        meta = dict(context.metadata)
+        for sat in saturations:
+            sat_key = str(sat)
+            outcomes = []
+            for seed in seeds:
+                resp = context.api.generate_samples(
+                    saturation=sat,
+                    runs=1,
+                    snapshot_times=snapshot_times,
+                    extras=["is_raf"],
+                    macro_params={"seed": seed},
+                )
+                outcomes.append(bool(resp.get("is_raf", False)))
+            stats[sat_key] = (sum(1 for v in outcomes if v) / len(outcomes)) if outcomes else 0.5
+            available_seeds[sat_key] = {str(s) for s in seeds}
         return {
-            "saturations": data["simulators"].keys(),
+            "saturations": [str(s) for s in saturations],
             "stats": stats,
-            "metadata": meta,
+            "metadata": dict(meta),
             "available_seeds": available_seeds,
         }
 

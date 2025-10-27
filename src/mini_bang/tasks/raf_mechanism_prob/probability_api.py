@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from mini_bang.framework.task import AgentAPI
-from mini_bang.tasks.raf_common.api_client import RAFSimulationClient
+from mini_bang.tasks.raf_common.api_client import RAFSimulationAPI
 
 
 class RAFMechanismProbabilityAPI(AgentAPI):
@@ -14,32 +14,30 @@ class RAFMechanismProbabilityAPI(AgentAPI):
         *,
         description: str,
         dataset: dict[str, Any],
-        client: RAFSimulationClient,
+        client: RAFSimulationAPI,
+        max_generate_calls: int | None = None,
     ) -> None:
         self._description = description
         self._dataset = dataset
         self._client = client
+        self._max_calls = int(max_generate_calls) if max_generate_calls is not None else 50
+        self._used_calls = 0
 
     def instructions(self) -> str:
         return self._description
 
-    def get_training_data(self) -> dict[str, Any]:
-        """Return the labelled boolean outcomes for each saturation."""
-        return {
-            "saturations": list(self._dataset["saturations"]),
-            "samples": {
-                sat: [
-                    {
-                        "macro_seed": item["macro_seed"],
-                        "is_raf": bool(item["is_raf"]),
-                    }
-                    for item in samples
-                ]
-                for sat, samples in self._dataset["samples"].items()
-            },
-        }
+    def remaining_calls(self) -> int:
+        """Return how many generate_samples calls remain in this task's budget."""
+        return max(0, self._max_calls - self._used_calls)
 
-    def simulate(
+    # No training data access: agents should use generate_samples
+
+    def _consume(self) -> None:
+        if self._used_calls >= self._max_calls:
+            raise RuntimeError("generate_samples call limit exceeded for this task")
+        self._used_calls += 1
+
+    def generate_samples(
         self,
         *,
         saturation: int,
@@ -50,6 +48,7 @@ class RAFMechanismProbabilityAPI(AgentAPI):
         micro_params: dict[str, Any] | None = None,
         sample_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        self._consume()
         return self._client.generate_samples(
             saturation=saturation,
             runs=runs,
@@ -59,3 +58,5 @@ class RAFMechanismProbabilityAPI(AgentAPI):
             micro_params=micro_params,
             sample_params=sample_params,
         )
+
+    # simulate() removed: use generate_samples()

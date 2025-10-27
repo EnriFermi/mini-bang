@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.request
-from typing import Any, Sequence
+from typing import Any, Dict, Sequence
 
 from mini_bang.framework.task import AgentAPI
+from mini_bang.mcp.client import MCPClient
 
 _DEFAULT_INSTRUCTIONS = (
     "Use generate_samples(T, runs, snapshot_times=None, *, max_raf=False, "
@@ -14,20 +12,29 @@ _DEFAULT_INSTRUCTIONS = (
 )
 
 
-class RAFSimulationClient(AgentAPI):
-    """HTTP client for RAF simulators exposed by the simulation server."""
+class RAFSimulationAPI(AgentAPI):
+    """Simulation API backed by the MCP server."""
 
-    def __init__(self, base_url: str, simulator_id: str, instructions: str | None = None):
-        self._base_url = base_url.rstrip("/")
+    def __init__(
+        self,
+        *,
+        simulator_id: str,
+        instructions: str | None = None,
+        client: MCPClient | None = None,
+    ) -> None:
         self._simulator_id = simulator_id
         self._instructions = instructions or _DEFAULT_INSTRUCTIONS
+        self._client = client or MCPClient()
 
     def instructions(self) -> str:
         return self._instructions
 
+    def describe(self) -> Dict[str, Any]:
+        return self._client.describe()
+
     def generate_samples(
         self,
-        saturation: int,
+        saturation: int | Sequence[int],
         runs: int,
         snapshot_times: Sequence[float] | None = None,
         *,
@@ -48,7 +55,7 @@ class RAFSimulationClient(AgentAPI):
         sample_payload: dict[str, Any] = dict(sample_params or {})
 
         if seed is not None:
-            macro_payload["seed"] = seed
+            macro_payload.setdefault("seed", seed)
         if max_raf is not None:
             micro_payload.setdefault("max_raf", bool(max_raf))
         if prune_catalysts is not None:
@@ -65,18 +72,4 @@ class RAFSimulationClient(AgentAPI):
         if extras:
             payload["extras"] = list(extras)
 
-        data = json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self._base_url}/simulate/{self._simulator_id}/generate",
-            data=data,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=3600) as response:
-                if response.status != 200:
-                    raise RuntimeError(f"Server returned status {response.status}")
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"Server error {exc.code}: {body}") from exc
+        return self._client.call_get_simulation(self._simulator_id, payload)

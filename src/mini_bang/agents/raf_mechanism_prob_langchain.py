@@ -13,6 +13,7 @@ from mini_bang.tasks.raf_mechanism_prob.probability_api import RAFMechanismProba
 @dataclass
 class _ProbContext:
     api: RAFMechanismProbabilityAPI
+    metadata: Dict[str, Any]
 
 
 class LangChainRAFMechanismProbabilityAgent(AgentBase):
@@ -24,17 +25,48 @@ class LangChainRAFMechanismProbabilityAgent(AgentBase):
     def solve(self, task: TaskEnvironment) -> TaskSubmission:
         if not isinstance(task.api, RAFMechanismProbabilityAPI):
             raise TypeError("LangChainRAFMechanismProbabilityAgent expects RAFMechanismProbabilityAPI")
-        answer = self._pipeline.invoke({"context": _ProbContext(api=task.api)})
+        answer = self._pipeline.invoke({"context": _ProbContext(api=task.api, metadata=task.metadata or {})})
         return TaskSubmission(answer=answer)
 
     def _compute_probabilities(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         context: _ProbContext = payload["context"]
-        data = context.api.get_training_data()
+        meta = context.metadata
+        saturations = [int(t) for t in meta.get("saturations", [])]
+        snapshot_times = [float(t) for t in meta.get("snapshot_times", [])]
+
+        # Use full call budget across sats with unique seeds
+        remaining = getattr(context.api, "remaining_calls", lambda: 10**9)()
+        if remaining <= 0:
+            return {"probabilities": {str(s): 0.5 for s in saturations}}
+
+        positives: Dict[str, int] = {str(s): 0 for s in saturations}
+        counts: Dict[str, int] = {str(s): 0 for s in saturations}
+        seed_base = 40_000
+        calls = 0
+        idx = 0
+        while calls < remaining and saturations:
+            sat = saturations[idx % len(saturations)]
+            key = str(sat)
+            seed = seed_base + calls
+            try:
+                resp = context.api.generate_samples(
+                    saturation=sat,
+                    runs=1,
+                    snapshot_times=snapshot_times,
+                    extras=["is_raf"],
+                    macro_params={"seed": seed},
+                )
+            except Exception:
+                break
+            if bool(resp.get("is_raf", False)):
+                positives[key] += 1
+            counts[key] += 1
+            calls += 1
+            idx += 1
+
         probabilities: Dict[str, float] = {}
-        for sat, samples in data["samples"].items():
-            if not samples:
-                probabilities[sat] = 0.5
-                continue
-            count = sum(1.0 for item in samples if item.get("is_raf"))
-            probabilities[sat] = count / len(samples)
+        for sat in saturations:
+            key = str(sat)
+            c = counts.get(key, 0)
+            probabilities[key] = (positives.get(key, 0) / c) if c else 0.5
         return {"probabilities": probabilities}
